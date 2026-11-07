@@ -1,4 +1,4 @@
-param([ValidateSet('normal','fallback','late','timeout','vanish','resize','maximized')][string[]]$Cases)
+param([ValidateSet('normal','fallback','late','timeout','vanish','resize','maximized','closing','dropped','restarting','activation-failure','missing','splash','splash-fallback','splash-timeout')][string[]]$Cases)
 $ErrorActionPreference='Stop'
 $repoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $output=Join-Path $repoRoot 'build/DragonCodexBoot'

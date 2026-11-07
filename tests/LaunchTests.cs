@@ -10,6 +10,16 @@ internal static class LaunchTests {
   JavaScriptSerializer s=new JavaScriptSerializer();Config copy=s.Deserialize<Config>(s.Serialize(original));change(copy);
   bool rejected=false;try { Entry.ValidateLaunchConfig(copy); } catch(ArgumentException) { rejected=true; }Check(rejected,label);
  }
+ private static byte[] Frame(bool interfaceVisible) {
+  byte[] pixels=new byte[StartupContent.Width*StartupContent.Height*4];
+  for(int y=0;y<StartupContent.Height;y++)for(int x=0;x<StartupContent.Width;x++) {
+   bool ink=(y<5&&x>140)||(x>76&&x<84&&y>44&&y<56);
+   if(interfaceVisible&&x>8&&x<45&&y>15&&y<85&&y%10<3&&x%5<3)ink=true;
+   byte value=(byte)(ink?25:240);int i=(y*StartupContent.Width+x)*4;
+   pixels[i]=pixels[i+1]=pixels[i+2]=value;pixels[i+3]=255;
+  }
+  return pixels;
+ }
  public static int Main(string[] args) {
   try {
    Config c=new JavaScriptSerializer().Deserialize<Config>(File.ReadAllText(args[0]));Entry.ValidateLaunchConfig(c);
@@ -43,6 +53,39 @@ internal static class LaunchTests {
    Check(!readiness.Observe(b,true,2.1),"Replacement handle starts a new interval");
    Check(!readiness.Observe(IntPtr.Zero,true,3),"Missing window clears readiness");
    Check(!readiness.Observe(b,true,4),"Reappearing handle is revalidated");
+   Check(!StartupContent.HasInterface(null),"Missing capture cannot mean loaded");
+   Check(!StartupContent.HasInterface(new byte[160*100*4]),"Black capture cannot mean loaded");
+   Check(!StartupContent.HasInterface(Frame(false)),"Responsive splash with caption controls and central logo is not ready");
+   Check(StartupContent.HasInterface(Frame(true)),"Sidebar content distinguishes a real interface from the splash");
+   byte[] dark=Frame(true);for(int i=0;i<dark.Length;i+=4)for(int channel=0;channel<3;channel++)dark[i+channel]=(byte)(255-dark[i+channel]);
+   Check(StartupContent.HasInterface(dark),"Interface detection also works with a dark background");
+   ContentReadiness content=new ContentReadiness();
+   content.Observe(a,true,0);Check(!content.IsReady(a,0),"One interface frame is insufficient");
+   content.Observe(a,true,.5);Check(!content.IsReady(a,.5),"Two interface frames are insufficient");
+   content.Observe(a,true,1);Check(content.IsReady(a,1),"Three interface frames over a second permit handoff");
+   Check(!content.IsReady(b,1),"Readiness cannot carry to another window");
+   Check(!content.IsReady(a,3),"Stale captures cannot permit handoff");
+   content.Observe(a,false,3);Check(!content.IsReady(a,3),"A returned loading page immediately cancels readiness");
+   content.Observe(a,true,3.5);content.Observe(b,true,4);Check(!content.IsReady(b,4),"A replacement window needs fresh stable content");
+   LaunchRecovery recovery=new LaunchRecovery();
+   Check(recovery.ShouldRequest(false,0)&&recovery.Attempts==1,"Cold start requests activation immediately");
+   Check(!recovery.ShouldRequest(false,2.9),"Dropped activation waits before retrying");
+   Check(recovery.ShouldRequest(false,3)&&recovery.Attempts==2,"Missing window retries after three seconds");
+   Check(!recovery.ShouldRequest(false,8.9),"Second retry uses a longer cooldown");
+   Check(recovery.ShouldRequest(false,9)&&recovery.Attempts==3,"Persistent absence gets one final activation");
+   Check(!recovery.ShouldRequest(false,100),"Activation attempts are bounded");
+   recovery=new LaunchRecovery();
+   Check(!recovery.ShouldRequest(true,0)&&recovery.Attempts==0,"Existing window is reused without activation");
+   Check(!recovery.ShouldRequest(false,.1),"A disappearing old window starts a grace interval");
+   Check(!recovery.ShouldRequest(false,.8),"Short window recreation does not trigger activation");
+   Check(recovery.ShouldRequest(false,.9),"Closing old window is replaced without waiting for the portrait hold");
+   Check(!recovery.ShouldRequest(true,1),"Replacement window immediately suppresses retry");
+   Check(!recovery.ShouldRequest(false,1.2),"Replacement loss gets its own grace interval");
+   Check(!recovery.ShouldRequest(true,1.4),"Transient replacement loss is cancelled on recovery");
+   Check(!recovery.ShouldRequest(false,2),"A later disappearance starts a fresh grace interval");
+   Check(!recovery.ShouldRequest(false,3),"Repeated window loss cannot bypass activation cooldown");
+   Check(recovery.ShouldRequest(false,4),"Lost replacement recovers after cooldown");
+   Check(!recovery.ShouldRequest(true,20)&&recovery.Attempts==2,"Stable window does not consume or reset retry budget");
    foreach(double duration in new[]{8.0,16,120}) {
     LaunchTimeline t=new LaunchTimeline(duration,2);
     t.Advance(t.HoldSeconds+.5,false);

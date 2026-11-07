@@ -109,6 +109,7 @@ namespace DragonCodexBoot {
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb,IntPtr param);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h,out Bounds b);
@@ -190,6 +191,61 @@ namespace DragonCodexBoot {
    return found;
   }
  }
+ // One background capture at a time: a slow window cannot block animation, Esc or the wait deadline.
+ internal sealed class ClientContentProbe:IDisposable {
+  private readonly object sync=new object();
+  private readonly ContentReadiness readiness=new ContentReadiness();
+  private readonly Stopwatch clock=Stopwatch.StartNew();
+  private bool pending,disposed;
+  private IntPtr requested;
+  private double lastRequest=-1;
+  public bool Update(IntPtr window) {
+   lock(sync) {
+    if(disposed)return false;
+    requested=window;double now=clock.Elapsed.TotalSeconds;
+    if(window==IntPtr.Zero)readiness.Observe(window,false,now);
+    else if(!pending&&now-lastRequest>=.5) {
+     pending=true;lastRequest=now;
+     ThreadPool.QueueUserWorkItem(delegate {
+      bool hasInterface=false;
+      try { hasInterface=Capture(window); }
+      catch(System.ComponentModel.Win32Exception) {}
+      catch(ExternalException) {}
+      catch(ArgumentException) {}
+      finally {
+       lock(sync) {
+        pending=false;
+        if(!disposed&&requested==window)readiness.Observe(window,hasInterface,clock.Elapsed.TotalSeconds);
+       }
+      }
+     });
+    }
+    return readiness.IsReady(window,now);
+   }
+  }
+  private static bool Capture(IntPtr window) {
+   Bounds bounds;
+   if(!Native.IsWindow(window)||!Native.GetWindowRect(window,out bounds)||bounds.Width<450||bounds.Height<280
+    ||bounds.Width>8192||bounds.Height>8192||(long)bounds.Width*bounds.Height>34000000)return false;
+   using(System.Drawing.Bitmap full=new System.Drawing.Bitmap(bounds.Width,bounds.Height)) {
+    using(System.Drawing.Graphics graphics=System.Drawing.Graphics.FromImage(full)) {
+     IntPtr dc=graphics.GetHdc();
+     try { if(!Native.PrintWindow(window,dc,2))return false; }finally { graphics.ReleaseHdc(dc); }
+    }
+    using(System.Drawing.Bitmap small=new System.Drawing.Bitmap(StartupContent.Width,StartupContent.Height,System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
+     using(System.Drawing.Graphics graphics=System.Drawing.Graphics.FromImage(small))graphics.DrawImage(full,0,0,small.Width,small.Height);
+     System.Drawing.Imaging.BitmapData data=small.LockBits(new System.Drawing.Rectangle(0,0,small.Width,small.Height),
+      System.Drawing.Imaging.ImageLockMode.ReadOnly,System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+     try {
+      byte[] pixels=new byte[StartupContent.Width*StartupContent.Height*4];
+      for(int y=0;y<small.Height;y++)Marshal.Copy(IntPtr.Add(data.Scan0,y*data.Stride),pixels,y*small.Width*4,small.Width*4);
+      return StartupContent.HasInterface(pixels);
+     }finally { small.UnlockBits(data); }
+    }
+   }
+  }
+  public void Dispose() { lock(sync) { disposed=true;requested=IntPtr.Zero; } }
+ }
  public sealed class BootWindow:Window {
   private readonly Config cfg;
   private readonly string root;
@@ -201,17 +257,25 @@ namespace DragonCodexBoot {
   private readonly PreviewScene scene;
   private readonly LaunchTimeline timeline;
   private readonly WindowReadiness readiness=new WindowReadiness();
+  private readonly LaunchRecovery recovery=new LaunchRecovery();
+  private readonly ClientContentProbe contentProbe=new ClientContentProbe();
+  private readonly Action activateClient;
   private readonly MediaPlayer audio=new MediaPlayer();
   private IntPtr host,target,thumbnail,thumbnailTarget,alignedHandle;
   private Bounds initialBounds;
   private double lastProbe=-1,failureAt=-1,sceneStartedAt=-1;
-  private bool ready,opened,holding,closing,startedFade,thumbnailFailed;
+  private bool ready,windowReady,opened,holding,closing,startedFade,thumbnailFailed;
   private bool audioReady,launchFailed,firstFrameRendered,openingThumbnail;
   public int ExitCode { get; private set; }
   private double endedAt=-1;
   public BootWindow(Config c,string baseDir):this(c,baseDir,false) {}
-  public BootWindow(Config c,string baseDir,bool useScene) {
+  public BootWindow(Config c,string baseDir,bool useScene):this(c,baseDir,useScene,null) {}
+  // Injectable activation is used only by isolated window tests; production always uses AppsFolder.
+  internal BootWindow(Config c,string baseDir,bool useScene,Action activation) {
    cfg=c;root=baseDir;sciFi=useScene;Title=sciFi?"Codex":(String.IsNullOrWhiteSpace(c.DisplayName)?"Dragon Codex Boot":c.DisplayName);
+   activateClient=activation??delegate {
+    using(Process process=Process.Start(new ProcessStartInfo("explorer.exe",cfg.AppLaunch) { UseShellExecute=true })) {}
+   };
    InputMethod.SetIsInputMethodEnabled(this,false);
    WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=false;
    AllowsTransparency=false;Topmost=true;Background=new SolidColorBrush(Color.FromRgb(250,247,253));
@@ -244,7 +308,7 @@ namespace DragonCodexBoot {
     Visibility=Visibility.Collapsed };
    grid.Children.Add(status);
    Content=grid;
-   PreviewKeyDown+=delegate(object sender,KeyEventArgs e) { if(e.Key==Key.Escape) { e.Handled=true;HandOff(); } };
+   PreviewKeyDown+=delegate(object sender,KeyEventArgs e) { if(e.Key==Key.Escape) { e.Handled=true;HandOff(true); } };
    SourceInitialized+=delegate {
     host=new WindowInteropHelper(this).Handle;
     if(sciFi) {
@@ -260,9 +324,14 @@ namespace DragonCodexBoot {
    };
    Loaded+=delegate {
     wall.Start();
-    if(target==IntPtr.Zero)LaunchApp();else Log("existing-window-reused");
-    if(sciFi) { if(target!=IntPtr.Zero)BeginScene(); }
-    else { media.Source=new Uri(Path.GetFullPath(Path.Combine(root,cfg.Video)));media.Play(); }
+    if(sciFi) {
+     // Refresh the constructor's snapshot: an old client may have exited while WPF initialized.
+     Probe();if(target!=IntPtr.Zero)Log("existing-window-reused");
+     EnsureClientStarted();BeginScene();
+    } else {
+     if(target==IntPtr.Zero)LaunchApp();else Log("existing-window-reused");
+     media.Source=new Uri(Path.GetFullPath(Path.Combine(root,cfg.Video)));media.Play();
+    }
     timer.Start();Log((sciFi?"scene-started":"started")+" fixed-player="+initialBounds.Width+"x"+initialBounds.Height
      +" at "+initialBounds.Left+","+initialBounds.Top);
     if(sciFi&&thumbnailFailed)Log("dwm-disabled-crossfade");
@@ -279,7 +348,7 @@ namespace DragonCodexBoot {
    media.MediaEnded+=delegate { endedAt=wall.Elapsed.TotalSeconds;HandOff(); };
    timer=new DispatcherTimer(DispatcherPriority.Render);timer.Interval=TimeSpan.FromMilliseconds(16);
    timer.Tick+=Tick;
-   Closed+=delegate { closing=true;timer.Stop();wall.Stop();media.Stop();audio.Close();DropThumbnail(); };
+   Closed+=delegate { closing=true;timer.Stop();wall.Stop();media.Stop();audio.Close();contentProbe.Dispose();DropThumbnail(); };
   }
   private IntPtr FixedBoundsHook(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam,ref bool handled) {
    if(message==0x0046&&!closing&&lParam!=IntPtr.Zero) {
@@ -299,9 +368,24 @@ namespace DragonCodexBoot {
   private void LaunchApp() {
    try {
     // Shell launches the packaged desktop app; its CLI helper is never used as a UI executable.
-    using(Process process=Process.Start(new ProcessStartInfo("explorer.exe",cfg.AppLaunch) { UseShellExecute=true })) {}
+    activateClient();
     Log("app-launch-requested");
-   } catch(Exception e) { ExitCode=2;launchFailed=true;failureAt=wall.Elapsed.TotalSeconds;Log("app-launch-failed: "+e.Message);status.Text="无法自动打开 Codex";status.Visibility=Visibility.Visible; }
+   } catch(System.ComponentModel.Win32Exception e) { LaunchFailed(e); }
+     catch(InvalidOperationException e) { LaunchFailed(e); }
+  }
+  private void LaunchFailed(Exception error) {
+   Log("app-launch-failed: "+error.Message);
+   if(sciFi&&recovery.Attempts<LaunchRecovery.MaxAttempts)return;
+   ExitCode=2;launchFailed=true;failureAt=wall.Elapsed.TotalSeconds;
+   status.Text="无法自动打开 Codex";status.Visibility=Visibility.Visible;
+  }
+  private void EnsureClientStarted() {
+   double now=wall.Elapsed.TotalSeconds;
+   if(closing||launchFailed||failureAt>=0||timeline.TimedOut||(sceneStartedAt<0&&now>=cfg.MaxWaitSeconds))return;
+   bool present=target!=IntPtr.Zero&&Native.IsWindow(target)&&Native.IsWindowVisible(target);
+   if(!recovery.ShouldRequest(present,now))return;
+   Log("app-activation-attempt="+recovery.Attempts);
+   LaunchApp();
   }
   private void Probe() {
    double now=wall.Elapsed.TotalSeconds;
@@ -309,13 +393,15 @@ namespace DragonCodexBoot {
    IntPtr candidate=Native.FindApp(cfg);
    bool responsive=candidate!=IntPtr.Zero&&Native.Responsive(candidate);
    if(candidate!=IntPtr.Zero&&Native.IsIconic(candidate))Native.ShowWindow(candidate,9);
-   ready=readiness.Observe(candidate,responsive,now);
+   windowReady=readiness.Observe(candidate,responsive,now);
+   ready=windowReady&&(!sciFi||contentProbe.Update(responsive?candidate:IntPtr.Zero));
+   if(sciFi&&!windowReady)contentProbe.Update(IntPtr.Zero);
    if(target!=candidate) {
     DropThumbnail();
     if(sciFi&&candidate!=IntPtr.Zero)Native.SetForegroundWindow(host);
    }
    target=candidate;
-   // Visible/responsive/stable is a window heuristic, not an official Codex content-ready event.
+   // Window readiness starts the cover; sustained interface content separately permits handoff.
   }
   private void RegisterThumbnail() {
    if(thumbnail!=IntPtr.Zero||thumbnailFailed)return;
@@ -346,9 +432,9 @@ namespace DragonCodexBoot {
    return true;
   }
   private void BeginScene() {
-   if(sceneStartedAt>=0||!firstFrameRendered||!FollowClient())return;
+   if(sceneStartedAt>=0||!firstFrameRendered||!windowReady||!FollowClient())return;
    sceneStartedAt=wall.Elapsed.TotalSeconds;
-   RegisterThumbnail();openingThumbnail=thumbnail!=IntPtr.Zero;
+   if(ready)RegisterThumbnail();openingThumbnail=thumbnail!=IntPtr.Zero;
    if(openingThumbnail)UpdateSceneThumbnail(1);
    Native.CloakOverlay(host,false);Activate();Native.SetForegroundWindow(host);OpenAudio();
    Bounds actual=Native.ClientBounds(host);
@@ -363,6 +449,7 @@ namespace DragonCodexBoot {
   }
   private void TickScene() {
    double now=wall.Elapsed.TotalSeconds;
+   EnsureClientStarted();
    if(launchFailed) { if(now-failureAt>=3)HandOff();return; }
    if(sceneStartedAt<0) {
     BeginScene();
@@ -384,12 +471,12 @@ namespace DragonCodexBoot {
     DropThumbnail();openingThumbnail=false;
    }
    if(timeline.TimedOut) {
-    if(failureAt<0) { ExitCode=2;failureAt=now;DropThumbnail();status.Text="未等到 Codex 窗口，请从原入口打开";status.Visibility=Visibility.Visible;Log("window-wait-timeout"); }
+    if(failureAt<0) { ExitCode=2;failureAt=now;DropThumbnail();status.Text="Codex 启动时间较长，请稍后重试";status.Visibility=Visibility.Visible;Log("window-wait-timeout"); }
     if(now-failureAt>=3)HandOff();return;
    }
    if(timeline.Waiting) {
     if(!wasWaiting) { audio.Pause();Log("waiting-for-window"); }
-    DropThumbnail();status.Text="CODEX · 创作空间接入中…";status.Visibility=Visibility.Visible;return;
+    Opacity=1;DropThumbnail();status.Text="CODEX · 创作空间接入中…";status.Visibility=Visibility.Visible;return;
    }
    if(wasWaiting) {
     status.Visibility=Visibility.Collapsed;
@@ -446,11 +533,15 @@ namespace DragonCodexBoot {
    }
    if(endedAt>=0&&wall.Elapsed.TotalSeconds-endedAt>.25)HandOff();
   }
-  private void HandOff() {
-   if(closing)return;closing=true;
-   timer.Stop();DropThumbnail();
+  private void HandOff(bool skipped=false) {
+   if(closing)return;
    IntPtr app=Native.FindApp(cfg);
-   if(app!=IntPtr.Zero) {
+   if(sciFi&&!skipped&&ExitCode==0&&!contentProbe.Update(app)) { ready=false;return; }
+   closing=true;timer.Stop();DropThumbnail();
+   if(sciFi&&!skipped&&ExitCode!=0) {
+    Close();Log(app==IntPtr.Zero?"closed-without-window":"closed-before-client-ready");return;
+   }
+   if(app!=IntPtr.Zero&&Native.IsWindowVisible(app)&&(skipped||Native.Responsive(app))) {
     if(Native.IsIconic(app))Native.ShowWindow(app,9);
     // Transfer activation while our foreground window still exists; closing it first lets the shell select another app.
     Native.SetForegroundWindow(app);
@@ -459,6 +550,7 @@ namespace DragonCodexBoot {
     Native.Responsive(app);
     Log("handed-off-to-real-window foreground="+(Native.GetForegroundWindow()==app));
    } else {
+    if(sciFi&&!skipped)ExitCode=2;
     Close();Log("closed-without-window");
    }
   }
