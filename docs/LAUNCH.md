@@ -41,7 +41,7 @@
 | `PlayerWidth` / `PlayerHeight` | 独立预览尺寸；启动模式以真实窗口尺寸为准 |
 | `AutoReplaceEntrypoints` / `ScanAllLocalDrives` | 必须一直为 false；两种模式都会检查 |
 
-动画覆盖包括标题栏在内的完整可见窗口，不强制修改客户端宽高。`MatchClientToPlayer` 和旧视频校准字段不控制本次科幻启动，不必导入 MP4。
+动画覆盖包括标题栏在内的完整可见窗口，不强制修改客户端宽高。背景随窗口铺满，主体保持等比和完整构图，人物贴合底部，窗口比例变化时不留黑边。`MatchClientToPlayer` 和旧视频校准字段不控制本次科幻启动，不必导入 MP4。
 
 如 Codex 安装标识变化，可只读运行 `Get-StartApps` 查找 `OpenAI.Codex` 对应的 AppID，然后更新 `AppLaunch`；不要填写 CLI 辅助进程的路径。
 

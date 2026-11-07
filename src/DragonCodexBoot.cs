@@ -236,8 +236,8 @@ namespace DragonCodexBoot {
    media=new MediaElement { LoadedBehavior=MediaState.Manual,UnloadedBehavior=MediaState.Manual,
     Stretch=Stretch.Uniform,ScrubbingEnabled=true,Volume=Geometry.Clamp(cfg.Volume) };
    if(sciFi) {
-    scene=new PreviewScene(c,root) { Width=1600,Height=900,IsLaunch=true };
-    grid.Children.Add(new Viewbox { Stretch=Stretch.Uniform,Child=scene });
+    scene=new PreviewScene(c,root) { IsLaunch=true };
+    grid.Children.Add(scene);
    } else grid.Children.Add(media);
    status=new TextBlock { HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Bottom,
     Margin=new Thickness(20,20,20,38),FontSize=16,Foreground=new SolidColorBrush(Color.FromRgb(115,91,144)),
@@ -389,7 +389,7 @@ namespace DragonCodexBoot {
    }
    if(timeline.Waiting) {
     if(!wasWaiting) { audio.Pause();Log("waiting-for-window"); }
-    DropThumbnail();status.Text="正在等待 Codex 窗口";status.Visibility=Visibility.Visible;return;
+    DropThumbnail();status.Text="CODEX · 创作空间接入中…";status.Visibility=Visibility.Visible;return;
    }
    if(wasWaiting) {
     status.Visibility=Visibility.Collapsed;

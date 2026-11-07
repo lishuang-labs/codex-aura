@@ -116,8 +116,7 @@ namespace DragonCodexBoot {
    Width=Math.Min(1280,SystemParameters.WorkArea.Width*.9);Height=Math.Min(770,SystemParameters.WorkArea.Height*.9);
    Grid layout=new Grid();layout.RowDefinitions.Add(new RowDefinition());
    layout.RowDefinitions.Add(new RowDefinition { Height=new GridLength(38) });
-   scene=new PreviewScene(config,root) { Width=1600,Height=900 };
-   Viewbox fit=new Viewbox { Stretch=Stretch.Uniform,Child=scene };layout.Children.Add(fit);
+   scene=new PreviewScene(config,root);layout.Children.Add(scene);
    controls=new TextBlock { Foreground=new SolidColorBrush(Color.FromRgb(181,173,194)),FontSize=12,
     VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(18,0,12,0) };
    Border footer=new Border { Background=new SolidColorBrush(Color.FromRgb(18,16,23)),Child=controls };
@@ -315,22 +314,32 @@ namespace DragonCodexBoot {
   }
   protected override void OnRender(DrawingContext d) {
    base.OnRender(d);double t=Time;
-   d.DrawRectangle(Brushes.Black,null,new Rect(0,0,1600,900));
+   if(ActualWidth<=0||ActualHeight<=0)return;
+   d.DrawRectangle(Brushes.Black,null,new Rect(0,0,ActualWidth,ActualHeight));
+   // Fit the composition uniformly, but extend its background across the entire window.
+   double scale=Math.Min(ActualWidth/1600,ActualHeight/900);
+   double offsetX=(ActualWidth-1600*scale)/2,offsetY=(ActualHeight-900*scale)/2;
+   Rect viewport=new Rect(-offsetX/scale,-offsetY/scale,ActualWidth/scale,ActualHeight/scale);
+   d.PushTransform(new MatrixTransform(scale,0,0,scale,offsetX,offsetY));
    d.PushOpacity(PreviewTimeline.Scene(t));
    // Launch reveals the entire window after its first rendered frame; the mark must already be visible then.
    double intro=IsLaunch?1-PreviewTimeline.Fade(t,1.5,.65):PreviewTimeline.Intro(t);
    if(intro>0) { d.PushOpacity(intro);Mark(d,800,370,32,"#C0B8AF");Text(d,"Codex",800,421,44,"#EBE4D3",true,true);
     Text(d,"创 作 序 章",800,487,13,"#8A8485",false,true);Line(d,"#514953",1,744,535,856,535);d.Pop(); }
    double hud=PreviewTimeline.Hud(t);
-   if(hud>0) { d.PushOpacity(hud);DrawHud(d,t);d.Pop(); }
-   if(t>7.4)DrawReveal(d,t);
-   d.Pop();
+   if(hud>0) { d.PushOpacity(hud);DrawHud(d,t,viewport);d.Pop(); }
+   if(t>7.4)DrawReveal(d,t,viewport);
+   d.Pop();d.Pop();
   }
-  private void DrawHud(DrawingContext d,double t) {
-   d.DrawRectangle(Ink("#1B171F"),null,new Rect(0,0,1600,900));d.DrawRectangle(atmosphere,null,new Rect(0,0,1600,900));
+  private void DrawHud(DrawingContext d,double t,Rect viewport) {
+   d.DrawRectangle(Ink("#1B171F"),null,viewport);d.DrawRectangle(atmosphere,null,viewport);
    // Low-contrast diagonal panes echo the reference's purple-grey glass surface.
-   d.DrawGeometry(Ink("#183F3549"),null,System.Windows.Media.Geometry.Parse("M 1120,0 L 1370,0 L 940,900 L 690,900 Z"));
-   for(int y=0;y<900;y+=5)Line(d,"#0BDFD5D0",.6,0,y,1600,y);
+   StreamGeometry pane=new StreamGeometry();using(StreamGeometryContext c=pane.Open()) {
+    double topX=1120-430*viewport.Top/900,bottomX=1120-430*viewport.Bottom/900;
+    c.BeginFigure(new Point(topX,viewport.Top),true,true);c.LineTo(new Point(topX+250,viewport.Top),true,false);
+    c.LineTo(new Point(bottomX+250,viewport.Bottom),true,false);c.LineTo(new Point(bottomX,viewport.Bottom),true,false);
+   }pane.Freeze();d.DrawGeometry(Ink("#183F3549"),null,pane);
+   for(double y=Math.Floor(viewport.Top/5)*5;y<viewport.Bottom;y+=5)Line(d,"#0BDFD5D0",.6,viewport.Left,y,viewport.Right,y);
    Mark(d,84,77,15,"#C2B5B7");Text(d,"Codex",112,53,27,"#E8DDD4",true,false);
    Text(d,"A U R A  /  V I S U A L  S T U D Y",113,91,9,"#978892",false,false);
    Text(d,"MOTION DESIGN   /   001",1515,66,11,"#C5B5C4",false,true);
@@ -382,9 +391,9 @@ namespace DragonCodexBoot {
     d.DrawRectangle(Ink("#9C859D"),null,new Rect(x+280,ry+2,17,3));
    }
   }
-  private void DrawReveal(DrawingContext d,double t) {
+  private void DrawReveal(DrawingContext d,double t,Rect viewport) {
    double appear=PreviewTimeline.Fade(t,7.4,.9);
-   d.PushOpacity(appear);d.DrawRectangle(halo,null,new Rect(0,0,1600,900));
+   d.PushOpacity(appear);d.DrawRectangle(halo,null,viewport);
    // Curved threads and independent motes continue moving around the character layer.
    double threads=PreviewTimeline.Fade(t,9.8,2);
    d.PushOpacity(threads*.65);
@@ -395,8 +404,11 @@ namespace DragonCodexBoot {
     }curve.Freeze();d.DrawGeometry(null,new Pen(Ink(i%3==0?"#8B746F89":"#315F526C"),i%3==0?1.2:.7),curve);
    }d.Pop();
    double alpha=PreviewTimeline.Character(t);
+   // Keep the portrait and its gathering particles anchored to the actual window bottom.
+   double portraitOffset=viewport.Bottom-900;
    if(alpha>0) {
     d.PushOpacity(alpha);
+    d.PushTransform(new TranslateTransform(0,portraitOffset));
     BitmapSource frame=characterAnimation==null?character:characterAnimation.FrameAt(Math.Max(0,t-9.8)*cfg.Preview.DurationSeconds/16);
     if(featherCharacter) {
      // Feather opaque image edges at render time; keep the original file and full composition.
@@ -410,14 +422,14 @@ namespace DragonCodexBoot {
      vertical.GradientStops.Add(new GradientStop(Colors.Black,1));
      d.PushOpacityMask(horizontal);d.PushOpacityMask(vertical);d.DrawImage(frame,characterRect);d.Pop();d.Pop();
     } else d.DrawImage(frame,characterRect);
-    d.Pop();
+    d.Pop();d.Pop();
    }
    double gather=PreviewTimeline.Fade(t,7.9,3.1),dissolve=1-PreviewTimeline.Fade(t,10.7,1.7);
    d.PushOpacity(dissolve);
    foreach(Particle p in particles) {
     double q=Geometry.Ease((gather-.12*Math.Sin(p.Seed))/.88);
     double x=p.SX+(p.X-p.SX)*q+Math.Sin(t*1.5+p.Seed)*70*(1-q);
-    double y=p.SY+(p.Y-p.SY)*q+Math.Cos(t+p.Seed)*45*(1-q);
+    double y=p.SY+(p.Y+portraitOffset-p.SY)*q+Math.Cos(t+p.Seed)*45*(1-q);
     d.DrawEllipse(Ink(p.Size>1.4?"#CCDBCCCE":"#7AAB96B3"),null,new Point(x,y),p.Size,p.Size);
    }d.Pop();
    d.PushOpacity(threads);
@@ -428,7 +440,7 @@ namespace DragonCodexBoot {
    // Keep copy legible while retaining the reference's left-title / right-portrait composition.
    LinearGradientBrush shade=new LinearGradientBrush();shade.StartPoint=new Point(0,0);shade.EndPoint=new Point(1,0);
    shade.GradientStops.Add(new GradientStop(Color.FromArgb(210,5,7,10),0));shade.GradientStops.Add(new GradientStop(Color.FromArgb(0,5,7,10),1));
-   d.DrawRectangle(shade,null,new Rect(0,0,870,900));d.Pop();
+   d.DrawRectangle(shade,null,new Rect(viewport.Left,viewport.Top,870-viewport.Left,viewport.Height));d.Pop();
    d.PushOpacity(PreviewTimeline.Title(t));
    Mark(d,317,310,24,"#BEACB5");
    // Welcome copy wraps within its own panel and never crosses the character.
@@ -438,8 +450,6 @@ namespace DragonCodexBoot {
    d.PushTransform(new SkewTransform(-9,0,317,520));Text(d,"Codex",317,454,108,"#F1E6CE",true,true);d.Pop();
    Text(d,"创 意 由 此 展 开",317,602,16,"#B4A7B9",false,true);
    Line(d,"#756575",1,240,653,394,653);Text(d,"A  S P A C E  F O R  W H A T ' S  N E X T",317,686,9,"#85758F",false,true);
-   Text(d,AssetStatus,1110,838,12,"#D2B6C8",false,true);
-   Text(d,(IsLaunch?"Codex Aura":"独立动画预览")+(characterAnimation!=null&&characterAnimation.FrameCount>1?" · 按原始帧速循环":" · 人物为静态图层"),1110,862,10,"#9E899F",false,true);
    if(!String.IsNullOrEmpty(AudioStatus))Text(d,AudioStatus,80,850,12,"#D2B6C8",false,false);
    d.Pop();d.Pop();
   }

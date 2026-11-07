@@ -24,13 +24,26 @@ internal static class PreviewTests {
   JavaScriptSerializer s=new JavaScriptSerializer();Config c=s.Deserialize<Config>(s.Serialize(original));change(c);
   bool rejected=false;try { PreviewEntry.Validate(c); } catch(ArgumentException) { rejected=true; }Check(rejected,label);
  }
- private static byte[] Render(PreviewScene scene,double t) {
-  scene.Width=800;scene.Height=450; // Export at half size using a scale, like the preview Viewbox.
-  scene.LayoutTransform=new ScaleTransform(.5,.5);scene.Width=1600;scene.Height=900;
-  scene.Measure(new Size(800,450));scene.Arrange(new Rect(0,0,800,450));
+ private static byte[] Render(PreviewScene scene,double t,int width=800,int height=450,string output=null) {
+  scene.Width=width;scene.Height=height;
+  scene.Measure(new Size(width,height));scene.Arrange(new Rect(0,0,width,height));
   scene.Time=t;scene.InvalidateVisual();scene.UpdateLayout();
-  RenderTargetBitmap b=new RenderTargetBitmap(800,450,96,96,PixelFormats.Pbgra32);b.Render(scene);
-  byte[] data=new byte[800*450*4];b.CopyPixels(data,800*4,0);return data;
+  RenderTargetBitmap b=new RenderTargetBitmap(width,height,96,96,PixelFormats.Pbgra32);b.Render(scene);
+  if(output!=null) {
+   Directory.CreateDirectory(Path.GetDirectoryName(output));
+   PngBitmapEncoder encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(b));
+   using(Stream stream=File.Create(output))encoder.Save(stream);
+  }
+  byte[] data=new byte[width*height*4];b.CopyPixels(data,width*4,0);return data;
+ }
+ // Fully visible HUD backgrounds must reach every edge, including after resizing the same scene.
+ private static bool FilledEdges(byte[] pixels,int width,int height) {
+  for(int y=0;y<height;y++)for(int x=0;x<width;x++) {
+   if(x>0&&x<width-1&&y>0&&y<height-1)continue;
+   int i=(y*width+x)*4;
+   if(pixels[i+3]!=255||pixels[i]+pixels[i+1]+pixels[i+2]<40)return false;
+  }
+  return true;
  }
  // Synthetic animation keeps the public tests independent of any user's character artwork.
  private static string CreateGifFixture(string runtime) {
@@ -102,6 +115,10 @@ internal static class PreviewTests {
    Check(scene.AssetStatus.Contains("PLACEHOLDER"),"Bundled silhouette stays labeled");
    byte[] a=Render(scene,3),b=Render(scene,6);long diff=0;for(int i=0;i<a.Length;i++)diff+=Math.Abs(a[i]-b[i]);
    Check(diff>100000,"HUD motion changes rendered pixels");
+   foreach(int[] size in new[]{new[]{800,450},new[]{800,500},new[]{800,600},new[]{1050,450},new[]{1761,1104}}) {
+    b=Render(scene,6,size[0],size[1],Path.Combine(runtime,"qa","preview","hud-"+size[0]+"x"+size[1]+".png"));
+    Check(FilledEdges(b,size[0],size[1]),"HUD fills all four edges without letterboxing at "+size[0]+"x"+size[1]);
+   }
    b=Render(scene,16);long rgb=0;for(int i=0;i<b.Length;i+=4)rgb+=b[i]+b[i+1]+b[i+2];
    Check(rgb==0,"Rendered ending is fully black");
    scene.IsLaunch=true;b=Render(scene,0);long openingRgb=0;
