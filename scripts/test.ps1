@@ -11,7 +11,7 @@ $argsList=@('/nologo','/target:exe','/platform:x64',('/out:'+(Join-Path $outputR
 if ($LASTEXITCODE -ne 0) { throw 'Test harness compilation failed.' }
 & (Join-Path $outputRoot 'GeometryTests.exe') (Join-Path $repoRoot 'config/launcher.example.json')
 if ($LASTEXITCODE -ne 0) { throw 'Geometry or configuration tests failed.' }
-# Stage one intentionally does not run shortcut integration fixtures or real-client tests.
+# Automated unit tests never operate shortcuts or the real client.
 $argsList=@('/nologo','/target:exe','/platform:x64',('/out:'+(Join-Path $outputRoot 'PreviewTests.exe')),('/reference:'+$exe),'/reference:System.Web.Extensions.dll','/reference:System.Xaml.dll')
 foreach ($name in @('PresentationFramework.dll','PresentationCore.dll','WindowsBase.dll')) { $argsList += '/reference:'+(Join-Path $framework ('WPF/'+$name)) }
 $argsList += Join-Path $repoRoot 'tests/PreviewTests.cs'
@@ -19,6 +19,11 @@ $argsList += Join-Path $repoRoot 'tests/PreviewTests.cs'
 if ($LASTEXITCODE -ne 0) { throw 'Preview test compilation failed.' }
 & (Join-Path $outputRoot 'PreviewTests.exe') $repoRoot
 if ($LASTEXITCODE -ne 0) { throw 'Preview tests failed.' }
+$argsList=@('/nologo','/target:exe','/platform:x64',('/out:'+(Join-Path $outputRoot 'LaunchTests.exe')),('/reference:'+$exe),'/reference:System.Web.Extensions.dll',(Join-Path $repoRoot 'tests/LaunchTests.cs'))
+& (Join-Path $framework 'csc.exe') @argsList
+if ($LASTEXITCODE -ne 0) { throw 'Launch test compilation failed.' }
+& (Join-Path $outputRoot 'LaunchTests.exe') (Join-Path $repoRoot 'config/launcher.example.json')
+if ($LASTEXITCODE -ne 0) { throw 'Launch tests failed.' }
 $process=Start-Process -FilePath $exe -ArgumentList '--preview-frames' -WindowStyle Hidden -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw 'Preview frame rendering failed.' }
 Get-Content -LiteralPath (Join-Path $outputRoot 'qa/self-test.json') -Raw

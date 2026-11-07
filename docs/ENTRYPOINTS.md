@@ -1,57 +1,45 @@
-# 启动入口替换与恢复
+# Codex 入口安装与恢复
 
-> 上游功能参考，当前独立预览不启用。以下旧版参数和操作不适用于当前预览入口；不要在本阶段运行入口替换脚本。当前两项自动集成开关均关闭，公开预览包不包含这些工具。预览使用方式见 [PREVIEW.md](PREVIEW.md)。
+复用上游 Windows 的可恢复 `.lnk` 方案：保留已有名称、图标和备份，将目标改为启动器的 `--launch`。缺少入口时创建名为 Codex、使用已安装客户端图标的快捷方式。
 
-下载版首次运行默认启动一次后台扫描。播放动画和打开客户端无需等待磁盘扫描结束。它针对 `launcher.json` 中配置的客户端；开发机的应用名显示为 ChatGPT，应用包标识是 OpenAI.Codex。
+这是手动安装。预览和启动本身都不会改快捷方式；`AutoReplaceEntrypoints` 与 `ScanAllLocalDrives` 在公开模板和实际配置中必须保持 false。
 
-## 操作
+## 安装
 
-1. 解压到长期保留的目录，双击 `DragonCodexBoot.exe`。程序播放动画，后台扫描和替换入口。
-2. 打开 `.integration/report.json` 查看替换、补建、跳过、权限错误和扫描超时。扫描最多 300 秒，下次播放不会自动重复扫描。
-3. 新增了入口时运行 `Rescan-Entrypoints.cmd`。公共目录写入失败时可由自己选择以管理员身份运行这个文件。
-4. 删除、移动程序或不再使用之前，运行 `Restore-Original-Entrypoints.cmd`。它恢复备份，并阻止下次播放自动重装。已被用户改动或删除的快捷方式会保留，原因记录在报告中。
+先构建项目，或把公开包解压到长期保留的目录。在项目/解压根目录运行：
 
-恢复与重新扫描也可使用 `DragonCodexBoot.exe --restore-entrypoints` / `--integrate-entrypoints`，不播放视频。命令行执行会等待入口脚本完成；平常播放的扫描在后台进行。
-
-如果要完全关闭替换，在首次运行前设置：
-
-```json
-"AutoReplaceEntrypoints": false
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-codex-entry.ps1
 ```
 
-如果只想扫描常用入口，设置 `ScanAllLocalDrives: false`。已有替换不会因为关闭配置自动恢复，应先运行恢复文件。
+安装脚本只处理当前用户的两个确切路径：
 
-## 匹配与备份
+- 桌面目录中的 `Codex.lnk`。
+- 开始菜单 Programs 目录中的 `Codex.lnk`。
 
-扫描 `.lnk` 的实际目标与参数。对包装应用，读取已安装包的应用清单和 AppsFolder ID；部分目标为空的包装应用快捷方式用 Shell 的 AppUserModel.ID 确认。只凭 ChatGPT / Codex 文件名不能触发替换。ChatGPT 网页 `.url` 和浏览器链接不改。
+它读取已安装应用的清单以确认 AppsFolder ID 和图标路径，不遍历目录或其他磁盘，不改公共目录、其他用户、应用注册或官方客户端文件。同名但指向无关软件的快捷方式会保留并报错。源码中的高级 `-SearchRoots` 仅供隔离测试；日常安装使用上面的包装脚本。
 
-替换时建立新的快捷方式，避免编辑原 MSIX 链接时遗留激活属性。保留文件名、已有图标、快捷键和窗口样式，清空旧参数，工作目录设为启动器目录。原文件保存在 `.integration/backups/`，原始哈希和安装后哈希记录在 `entrypoints-state.json`。每次替换先持久化记录，再写入文件，并检查写入结果。
+## 开始菜单和任务栏
 
-恢复只覆盖内容仍与安装后的哈希相同的文件。备份校验不符则拒绝恢复；用户改变过的文件不会覆盖。程序补建且仍由它持有的快捷方式在恢复时移除。所有日志与备份仅留在本机，不上传到 GitHub。
+安装后可点击桌面的 **Codex** 启动动画。若平时使用开始菜单固定项：
 
-## 实际覆盖范围
+1. 对桌面的新 **Codex** 快捷方式点右键，选择“固定到‘开始’屏幕”；Windows 版本不同可能需要“显示更多选项”。
+2. 从开始菜单的新固定项启动。旧的官方应用固定项仍直接启动客户端，可取消旧项固定以免混淆。
+3. 任务栏同理：需要固定新快捷方式；已经固定的官方入口不会自动换目标。
 
-| 入口 | 行为 |
-| --- | --- |
-| 用户桌面、开始菜单程序目录中的 `.lnk` | 精确匹配后替换；缺少对应入口时补建 |
-| 公共桌面、公共开始菜单、其他用户目录 | 可访问且有写权限时替换；否则记录失败 |
-| 快速启动/任务栏目录中的 `.lnk` | 修改文件；任务栏缓存可能需要取消固定后重固定 |
-| 其他本地固定磁盘上的 `.lnk` | 默认继续扫描可访问目录，受时间预算和排除目录限制 |
-| MSIX 注册的所有应用、搜索结果、原固定的开始菜单项 | 仍可能直接激活官方客户端；应取消原固定项，再固定启动器 |
-| 直接运行官方 exe、协议、第三方程序内部调用 | 不拦截 |
-| 网页 ChatGPT、浏览器书签 | 不替换为本地 Codex 客户端 |
-| Windows、回收站、链接目录、运行时/缓存目录、启动器目录 | 跳过；不修改应用包 |
+名称和图标可以相同，但 MSIX 注册的应用入口、应用搜索结果、直接运行官方 exe、协议和其他程序的内部调用不在快捷方式替换范围内。没有后台监视器、系统服务或全局启动拦截。
 
-因此这项功能是可恢复的快捷方式替换，不能声称所有启动路径都已接管。默认设置尽量覆盖本机可识别的入口，报告同时保留 `RegisteredApplicationChanged: false`、`StartPinsAutomaticallyChanged: false` 和 `TaskbarCacheRefreshVerified: false`。
+## 检查与恢复
 
-## 迁移与卸载
+```powershell
+.\scripts\install-codex-entry.ps1 -Action Verify
+.\scripts\install-codex-entry.ps1 -Action Restore
+```
 
-先恢复，再移动文件夹，并从新位置运行或重新扫描。不要只移动 exe：程序需要同目录的视频、配置、脚本和恢复记录。没有系统服务或全局执行钩子；完成恢复、取消自己固定的启动器入口后，可以删除解压目录。恢复遇到用户改动时保留文件，需自己决定这些入口后续指向哪里。
+报告位于程序目录 `.integration/report.json`，原文件备份在 `.integration/backups/`，状态与 SHA-256 校验在 `.integration/entrypoints-state.json`。这些文件只留本地，不能在恢复前清理。脚本报告的 `StartPinsAutomaticallyChanged: false` 表示脚本没有操作固定项；通过界面手动固定不由此报告追踪。
 
-## 高级扫描
+恢复时，只有内容仍与安装后哈希一致的入口才会恢复原文件；本工具新建的入口会移除。同名入口后来被用户改动或删除时保留用户状态，备份校验失败时拒绝覆盖。恢复不会自动取消开始菜单或任务栏的固定项，需自行取消。
 
-脚本支持 `-SearchRoots` 显式指定扫描目录；使用它不会补建实际桌面/开始菜单入口，也不会扫描其他磁盘。`-OfficialExecutablePaths` 可额外指定已确认的客户端可执行文件；默认从配置的已安装应用包清单获得目标。`-ScanBudgetSeconds` 可设置 1–1800 秒预算。
+移动或删除程序目录前先恢复入口，再从新目录重新安装和固定。不要只移动 exe；配置、素材与恢复记录也需保留。
 
-回归测试只扫描项目内的隔离目录，不自动修改开发者真实入口。
-
-Windows 对快捷方式身份和重新启动信息的处理参考 [Microsoft AppUserModelID 文档](https://learn.microsoft.com/zh-cn/windows/win32/shell/appids)；客户端也可能使用独立的[应用激活方式](https://learn.microsoft.com/en-us/windows/apps/develop/launch/)，因此快捷方式改写与应用注册接管是不同的覆盖范围。
+`create-launch-shortcut.ps1` 仍可创建独立的 Codex Aura 备用入口。旧的 `--integrate-entrypoints`、`--restore-entrypoints` 参数及旧 CMD 不用于本版本；使用上述脚本完成操作。

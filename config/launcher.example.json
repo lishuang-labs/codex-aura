@@ -1,6 +1,9 @@
 {
   "AutoReplaceEntrypoints": false,
   "ScanAllLocalDrives": false,
+  "Launch": {
+    "UseDwmTransition": true
+  },
   "Preview": {
     "WelcomeText": "欢迎回来，创造者。",
     "DurationSeconds": 16,

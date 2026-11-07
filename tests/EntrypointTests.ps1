@@ -33,12 +33,12 @@ $withArgs=Make-Link 'command-arguments.lnk' (Join-Path $env:WINDIR 'explorer.exe
 $url=Join-Path $linksRoot 'ChatGPT.url';Set-Content -LiteralPath $url -Encoding ASCII -Value "[InternetShortcut]`r`nURL=https://chatgpt.com/"
 $all=@($direct,$apps,$sameName,$wrongApp,$withArgs,$url)
 $hashes=@{};foreach ($path in $all) { $hashes[$path]=Hash $path }
-$install=Run 'Auto'
+$install=Run 'Install'
 Check ($install.Replaced -eq 2 -and $install.Errors.Count -eq 0 -and $install.FoldersInspected -eq 2) 'Official and AppsFolder links must be found recursively.'
 foreach ($path in @($direct,$apps)) {
     $link=$shell.CreateShortcut($path)
     Check ($link.TargetPath -ieq (Join-Path $appRoot 'DragonCodexBoot.exe')) 'Target must be launcher.'
-    Check ($link.Arguments -eq '' -and $link.WorkingDirectory -ieq $appRoot) 'Launcher must have clean args and its own working directory.'
+    Check ($link.Arguments -eq '--launch' -and $link.WorkingDirectory -ieq $appRoot) 'Launcher must have explicit launch args and its own working directory.'
     Check ($link.IconLocation -ieq $other+',0') 'Original icon must be preserved.'
 }
 foreach ($path in @($sameName,$wrongApp,$withArgs,$url)) { Check ((Hash $path) -eq $hashes[$path]) 'Unrelated links and web URLs must remain byte-identical.' }
@@ -76,7 +76,7 @@ $corrupt=Run 'Restore'
 Check ($corrupt.Errors.Count -eq 1 -and (Hash $apps) -eq $installedHash) 'Corrupted backup must never be restored.'
 # A record for a new link is exercised separately; deletion is only permitted after ownership hash verification.
 $created=Make-Link 'created-fixture.lnk' (Join-Path $appRoot 'DragonCodexBoot.exe')
-$link=$shell.CreateShortcut($created);$link.WorkingDirectory=$appRoot;$link.Arguments='';$link.Save()
+$link=$shell.CreateShortcut($created);$link.WorkingDirectory=$appRoot;$link.Arguments='--launch';$link.Save()
 $state.Entries=@([pscustomobject]@{Path=$created;OriginalExists=$false;OriginalBackup=$null;OriginalSHA256=$null;InstalledSHA256=(Hash $created);Restored=$false})
 $state.Restored=$false;$state | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $statePath -Encoding UTF8
 $deleted=Run 'Restore';Check ($deleted.Restored -eq 1 -and !(Test-Path -LiteralPath $created)) 'Only a verified project-created shortcut may be removed.'
@@ -94,6 +94,20 @@ try {
 } finally { $lock.Dispose() }
 $unwritten=Run 'Restore'
 Check ((Hash $lockedLink) -eq $lockedOriginal) 'Restore must accept an unchanged original after a failed write.'
+$exactRoot=Join-Path $fixture 'exact-app'
+New-Item -ItemType Directory -Path $exactRoot | Out-Null
+Copy-Item -LiteralPath (Join-Path $appRoot 'DragonCodexBoot.exe'),(Join-Path $appRoot 'launcher.json') -Destination $exactRoot
+$selected=Make-Link 'exact-selected.lnk' $official
+$unselected=Make-Link 'exact-unselected.lnk' $official
+$newLink=Join-Path $linksRoot 'new-Codex.lnk'
+$selectedHash=Hash $selected;$unselectedHash=Hash $unselected
+$null=& (Join-Path $repoRoot 'scripts/integrate-entrypoints.ps1') -Action Install -AppRoot $exactRoot -ShortcutPaths $selected,$newLink -CreateMissingLinks -OfficialExecutablePaths $official
+$exactReport=Get-Content (Join-Path $exactRoot '.integration/report.json') -Raw | ConvertFrom-Json
+Check ($exactReport.Created -eq 1 -and $exactReport.Replaced -eq 1 -and $exactReport.FoldersInspected -eq 0 -and $exactReport.SearchRoots.Count -eq 0) 'Exact path installation must never scan directories or drives.'
+Check ((Hash $unselected) -eq $unselectedHash) 'Unselected official shortcuts must stay unchanged.'
+Check ($shell.CreateShortcut($newLink).Arguments -eq '--launch' -and $shell.CreateShortcut($newLink).IconLocation -ieq $official+',0') 'New entry must use launch mode and installed client icon.'
+$null=& (Join-Path $repoRoot 'scripts/integrate-entrypoints.ps1') -Action Restore -AppRoot $exactRoot
+Check ((Hash $selected) -eq $selectedHash -and !(Test-Path $newLink)) 'Exact installation must restore original bytes and remove only its created link.'
 @{ok=$true;checks=$checks;scope='Isolated .lnk file metadata and backup/restore only; no actual user entrypoints changed.'} |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $repoRoot 'build/DragonCodexBoot/qa/entrypoint-tests.json') -Encoding UTF8
 Write-Output ('PASS: '+$checks+' isolated entrypoint assertions. No desktop UI or actual shortcuts changed.')

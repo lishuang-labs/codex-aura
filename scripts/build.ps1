@@ -24,16 +24,20 @@ if ($IconPath) {
 }
 $argsList += Join-Path $repoRoot 'src/DragonCodexBoot.cs'
 $argsList += Join-Path $repoRoot 'src/SciFiPreview.cs'
+$argsList += Join-Path $repoRoot 'src/LaunchSession.cs'
 & $compiler @argsList
 if ($LASTEXITCODE -ne 0) { throw 'Compilation failed.' }
 $configPath = Join-Path $outputRoot 'launcher.json'
 if (!(Test-Path -LiteralPath $configPath)) {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'config/launcher.example.json') -Destination $configPath
 }
-# Phase-one builds enforce these two flags even when an old runtime config already exists.
+# Preview and explicit launch both keep automatic shortcut replacement and drive scans disabled.
 $runtimeConfig = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $runtimeConfig | Add-Member -NotePropertyName AutoReplaceEntrypoints -NotePropertyValue $false -Force
 $runtimeConfig | Add-Member -NotePropertyName ScanAllLocalDrives -NotePropertyValue $false -Force
+if ($runtimeConfig.PSObject.Properties.Name -notcontains 'Launch') {
+    $runtimeConfig | Add-Member -NotePropertyName Launch -NotePropertyValue ([pscustomobject]@{UseDwmTransition=$true})
+}
 $runtimeConfig | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $configPath -Encoding UTF8
 New-Item -ItemType Directory -Path (Join-Path $outputRoot 'assets') -Force | Out-Null
 if (!(Test-Path -LiteralPath (Join-Path $repoRoot 'assets/character-placeholder.png'))) {
@@ -47,6 +51,7 @@ foreach ($asset in Get-ChildItem -LiteralPath (Join-Path $repoRoot 'assets') -Fi
         Copy-Item -LiteralPath $asset.FullName -Destination (Join-Path $outputRoot 'assets') -Force
     }
 }
-Copy-Item -LiteralPath (Join-Path $repoRoot 'Preview.cmd') -Destination $outputRoot -Force
-# Legacy media and shortcut scripts stay in source for later work, outside the preview build.
+Copy-Item -LiteralPath (Join-Path $repoRoot 'Preview.cmd'),(Join-Path $repoRoot 'Launch.cmd') -Destination $outputRoot -Force
+& (Join-Path $PSScriptRoot 'create-launch-shortcut.ps1') -AppRoot $outputRoot
+# Shortcut installation is explicit via the source/release scripts, never part of a build or launch.
 Write-Output ('Built: ' + (Join-Path $outputRoot 'DragonCodexBoot.exe'))

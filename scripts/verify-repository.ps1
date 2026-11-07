@@ -7,11 +7,11 @@ $files=@(Get-PublicSourceFiles $repoRoot)
 Assert-PublicSourceFiles $repoRoot $files
 Write-Output ('PASS: '+$files.Count+' public source files; no detected private media, output, credential markers or personal absolute paths.')
 if ($SourceOnly) { return }
-$zip=Join-Path $repoRoot 'dist/Codex-Aura-Preview-Stage1.zip'
+$zip=Join-Path $repoRoot 'dist/Codex-Aura-Stage2.zip'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive=[IO.Compression.ZipFile]::OpenRead($zip)
 try {
-    $expectedFiles=@('DragonCodexBoot.exe','launcher.json','Preview.cmd','LICENSE','README.md','THIRD_PARTY_NOTICES.md','assets/character-placeholder.png','docs/PREVIEW.md','docs/PREVIEW-TESTS.md')
+    $expectedFiles=@('DragonCodexBoot.exe','launcher.json','Preview.cmd','Launch.cmd','LICENSE','README.md','THIRD_PARTY_NOTICES.md','assets/character-placeholder.png','docs/PREVIEW.md','docs/PREVIEW-TESTS.md','docs/LAUNCH.md','docs/ENTRYPOINTS.md','scripts/create-launch-shortcut.ps1','scripts/install-codex-entry.ps1','scripts/integrate-entrypoints.ps1')
     $actualFiles=@($archive.Entries | Where-Object { $_.Name } | ForEach-Object { $_.FullName.Replace('\','/') })
     if (@(Compare-Object $expectedFiles $actualFiles).Count) { throw 'Unexpected or missing public package entry.' }
     $reader=New-Object IO.StreamReader($archive.GetEntry('launcher.json').Open())

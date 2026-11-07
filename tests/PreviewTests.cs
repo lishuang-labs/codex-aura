@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 using System.Windows;
 using System.Windows.Media;
@@ -8,6 +9,16 @@ using DragonCodexBoot;
 
 internal static class PreviewTests {
  private static int checks;
+ private static string IntegrationState(string runtime) {
+  string directory=Path.Combine(runtime,".integration");
+  if(!Directory.Exists(directory))return "absent";
+  string[] files=Directory.GetFiles(directory,"*",SearchOption.AllDirectories);Array.Sort(files,StringComparer.Ordinal);
+  System.Text.StringBuilder result=new System.Text.StringBuilder("present");
+  using(SHA256 sha=SHA256.Create())foreach(string file in files) {
+   using(FileStream stream=File.OpenRead(file))result.Append(file).Append(Convert.ToBase64String(sha.ComputeHash(stream)));
+  }
+  return result.ToString();
+ }
  private static void Check(bool value,string label) { if(!value)throw new Exception(label);checks++; }
  private static void Reject(Config original,Action<Config> change,string label) {
   JavaScriptSerializer s=new JavaScriptSerializer();Config c=s.Deserialize<Config>(s.Serialize(original));change(c);
@@ -41,6 +52,7 @@ internal static class PreviewTests {
  public static int Main(string[] args) {
   try {
    string root=args[0],runtime=Path.Combine(root,"build","DragonCodexBoot");
+   string integrationBefore=IntegrationState(runtime);
    JavaScriptSerializer s=new JavaScriptSerializer();
    Config c=s.Deserialize<Config>(File.ReadAllText(Path.Combine(root,"config","launcher.example.json")));
    Config actual=s.Deserialize<Config>(File.ReadAllText(Path.Combine(runtime,"launcher.json")));
@@ -92,6 +104,12 @@ internal static class PreviewTests {
    Check(diff>100000,"HUD motion changes rendered pixels");
    b=Render(scene,16);long rgb=0;for(int i=0;i<b.Length;i+=4)rgb+=b[i]+b[i+1]+b[i+2];
    Check(rgb==0,"Rendered ending is fully black");
+   scene.IsLaunch=true;b=Render(scene,0);long openingRgb=0;
+   for(int i=0;i<b.Length;i+=4)openingRgb+=b[i]+b[i+1]+b[i+2];
+   Check(openingRgb>100000,"Launch first frame already contains the Codex mark and title");
+   scene.IsLaunch=false;b=Render(scene,0);long previewRgb=0;
+   for(int i=0;i<b.Length;i+=4)previewRgb+=b[i]+b[i+1]+b[i+2];
+   Check(previewRgb==0,"Independent preview retains its original black opening");
    c.Preview.CharacterPath="missing-image.png";scene=new PreviewScene(c,runtime);
    Check(scene.AssetStatus.Contains("素材不可用"),"Missing image uses explicit fallback");Render(scene,12.8);
    string bad=Path.Combine(runtime,"qa","invalid-character.png");Directory.CreateDirectory(Path.GetDirectoryName(bad));File.WriteAllText(bad,"not an image");
@@ -107,8 +125,8 @@ internal static class PreviewTests {
    Check(!previewSource.Contains("Native.")&&!previewSource.Contains("Process.Start")&&!previewSource.Contains("new BootWindow"),"Preview has no native-client or process-launch calls");
    string entry=File.ReadAllText(Path.Combine(root,"src","DragonCodexBoot.cs"));
    int start=entry.IndexOf("public static int Main(string[] args)");int end=entry.IndexOf("internal static int RunSelfTest",start);
-   string main=entry.Substring(start,end-start);Check(main.Contains("return PreviewEntry.Run(")&&!main.Contains("RunLauncher("),"Main cannot enter legacy launch path");
-   Check(!Directory.Exists(Path.Combine(runtime,".integration")),"No integration state created");
+   string main=entry.Substring(start,end-start);Check(main.Contains("return PreviewEntry.Run(")&&main.Contains("if(IsLaunchRequest(args))"),"Preview remains the default and client launch needs an exact explicit mode");
+   Check(IntegrationState(runtime)==integrationBefore,"Preview must not create or change installed entrypoint state");
    Console.WriteLine("PASS: "+checks+" preview safety, config, timeline, asset and pixel assertions. No client or shortcut operations.");return 0;
   } catch(Exception e) { Console.Error.WriteLine(e);return 1; }
  }

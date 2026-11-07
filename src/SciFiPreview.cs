@@ -48,7 +48,7 @@ namespace DragonCodexBoot {
   }
   public static void Validate(Config c) {
    if(c==null||c.Preview==null)throw new ArgumentException("缺少 Preview 配置。");
-   if(c.AutoReplaceEntrypoints||c.ScanAllLocalDrives)throw new ArgumentException("第一阶段必须关闭 AutoReplaceEntrypoints 和 ScanAllLocalDrives。");
+   if(c.AutoReplaceEntrypoints||c.ScanAllLocalDrives)throw new ArgumentException("必须关闭 AutoReplaceEntrypoints 和 ScanAllLocalDrives。");
    double duration=c.Preview.DurationSeconds;
    if(Double.IsNaN(duration)||Double.IsInfinity(duration)||duration<8||duration>120)
     throw new ArgumentException("DurationSeconds 必须在 8 至 120 秒之间。");
@@ -64,7 +64,7 @@ namespace DragonCodexBoot {
    try {
     // Only these exact modes are accepted. In particular, combining preview with integration is rejected.
     if(args.Length>1||(args.Length==1&&args[0]!="--preview"&&args[0]!="--preview-frames"&&args[0]!="--self-test"))
-     throw new ArgumentException("本阶段仅支持 --preview、--preview-frames、--self-test。客户端启动和入口集成尚未开放。");
+     throw new ArgumentException("预览仅支持 --preview、--preview-frames、--self-test；启动客户端请单独使用 --launch。");
     Config c=new JavaScriptSerializer().Deserialize<Config>(File.ReadAllText(Path.Combine(root,"launcher.json")));
     Validate(c);
     if(args.Contains("--self-test"))return Entry.RunSelfTest(root);
@@ -220,6 +220,7 @@ namespace DragonCodexBoot {
   private Rect characterRect;
   private readonly Brush atmosphere,halo;
   public double Time { get; set; }
+  public bool IsLaunch { get; set; }
   public string AssetStatus { get; private set; }
   public string AudioStatus { get; set; }
   private struct Particle { public double X,Y,SX,SY,Size,Seed; }
@@ -316,7 +317,8 @@ namespace DragonCodexBoot {
    base.OnRender(d);double t=Time;
    d.DrawRectangle(Brushes.Black,null,new Rect(0,0,1600,900));
    d.PushOpacity(PreviewTimeline.Scene(t));
-   double intro=PreviewTimeline.Intro(t);
+   // Launch reveals the entire window after its first rendered frame; the mark must already be visible then.
+   double intro=IsLaunch?1-PreviewTimeline.Fade(t,1.5,.65):PreviewTimeline.Intro(t);
    if(intro>0) { d.PushOpacity(intro);Mark(d,800,370,32,"#C0B8AF");Text(d,"Codex",800,421,44,"#EBE4D3",true,true);
     Text(d,"创 作 序 章",800,487,13,"#8A8485",false,true);Line(d,"#514953",1,744,535,856,535);d.Pop(); }
    double hud=PreviewTimeline.Hud(t);
@@ -437,7 +439,7 @@ namespace DragonCodexBoot {
    Text(d,"创 意 由 此 展 开",317,602,16,"#B4A7B9",false,true);
    Line(d,"#756575",1,240,653,394,653);Text(d,"A  S P A C E  F O R  W H A T ' S  N E X T",317,686,9,"#85758F",false,true);
    Text(d,AssetStatus,1110,838,12,"#D2B6C8",false,true);
-   Text(d,characterAnimation!=null&&characterAnimation.FrameCount>1?"独立动画预览 · 按原始帧速循环":"独立动画预览 · 人物为静态图层",1110,862,10,"#9E899F",false,true);
+   Text(d,(IsLaunch?"Codex Aura":"独立动画预览")+(characterAnimation!=null&&characterAnimation.FrameCount>1?" · 按原始帧速循环":" · 人物为静态图层"),1110,862,10,"#9E899F",false,true);
    if(!String.IsNullOrEmpty(AudioStatus))Text(d,AudioStatus,80,850,12,"#D2B6C8",false,false);
    d.Pop();d.Pop();
   }

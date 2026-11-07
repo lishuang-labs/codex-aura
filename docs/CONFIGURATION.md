@@ -1,6 +1,6 @@
 # 配置说明
 
-第一阶段请使用 [PREVIEW.md](PREVIEW.md) 的配置说明。原有 `Video`、`AppLaunch`、`HoldAt`、`ScreenFrames` 等字段仅为保留的交接逻辑服务，不参与当前预览。
+独立预览请使用 [PREVIEW.md](PREVIEW.md)，第二阶段启动请使用 [LAUNCH.md](LAUNCH.md)。原有 `Video`、`HoldAt`、`ScreenFrames`、`TransitionStart/End` 仅服务于保留的 MP4 逻辑，不参与当前科幻预览或启动；`AppLaunch` 与进程匹配字段用于显式启动模式。
 
 运行目录中的 `launcher.json` 是实际配置；`config/launcher.example.json` 是公开模板。
 
@@ -13,12 +13,12 @@
 | `ProcessPathContains` | 可执行文件路径中必须出现的字符串，用来区分同名进程 |
 | `HoldAt` | 客户端未就绪时暂停视频的位置，单位秒 |
 | `TransitionStart` / `TransitionEnd` | 真实界面淡入与填满窗口的起止秒数 |
-| `MaxWaitSeconds` | 等待预算；当前实现达到 `MaxWaitSeconds + 20` 秒总墙钟时间后结束 |
+| `MaxWaitSeconds` | 科幻启动首次等窗口、末段等就绪各自的预算，1–300 秒；旧视频模式另有总时限 |
 | `Volume` | 0–1 音量 |
-| `PlayerWidth` / `PlayerHeight` | 固定播放窗口的物理像素尺寸 |
-| `MatchClientToPlayer` | 是否将真实客户端客户区对齐到播放窗口 |
-| `AutoReplaceEntrypoints` | 第一阶段固定为 `false`，开启时预览拒绝运行 |
-| `ScanAllLocalDrives` | 第一阶段固定为 `false`，不扫描任何快捷方式目录或磁盘 |
+| `PlayerWidth` / `PlayerHeight` | 预览尺寸；科幻启动始终跟随真实窗口尺寸 |
+| `MatchClientToPlayer` | 仅用于旧视频模式，科幻启动不调整客户端尺寸 |
+| `AutoReplaceEntrypoints` | 固定为 `false`，开启时预览和启动均拒绝运行 |
+| `ScanAllLocalDrives` | 固定为 `false`；手动入口安装仅处理两个明确路径 |
 | `ScreenFrames` | 视频中屏幕区域的矩形关键帧 |
 
 ## 找到本机客户端标识
@@ -30,6 +30,8 @@ Get-StartApps | Where-Object { $_.Name -match 'ChatGPT|Codex' }
 示例配置使用 `OpenAI.Codex_2p2nqsd0c76g0!App`。这来自项目开发机，不保证每个发行渠道都相同；用本机实际结果更新 `AppLaunch`。进程名和路径过滤也要与实际安装匹配。
 
 ## 校准视频中的屏幕
+
+以下为继承的 MP4 实现参考，不用于当前科幻预览和启动模式。
 
 `ScreenFrames` 使用画面归一化坐标，不是显示器坐标：
 

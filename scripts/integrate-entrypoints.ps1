@@ -3,11 +3,15 @@ param(
     [ValidateSet('Auto','Install','Restore','Verify')][string]$Action='Install',
     [string]$AppRoot,
     [string[]]$SearchRoots,
+    [string[]]$ShortcutPaths,
+    [switch]$CreateMissingLinks,
     [string[]]$OfficialExecutablePaths,
     [switch]$NoCreateDefaultLinks,
     [ValidateRange(1,1800)][int]$ScanBudgetSeconds=300
 )
 $ErrorActionPreference='Stop'
+if ($SearchRoots -and $ShortcutPaths) { throw 'Use explicit shortcut paths or search roots, not both.' }
+if ($Action -eq 'Install' -and !$SearchRoots -and !$ShortcutPaths) { throw 'Explicit shortcut paths are required; automatic system-wide integration is disabled.' }
 if (!$AppRoot) {
     $parent=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     if (Test-Path -LiteralPath (Join-Path $parent 'DragonCodexBoot.exe')) { $AppRoot=$parent }
@@ -43,7 +47,7 @@ function Path-Equals([string]$a,[string]$b) { [string]::Equals($a,$b,[StringComp
 function Get-Link([string]$Path) { $script:shell.CreateShortcut($Path) }
 function Link-Is-Launcher([string]$Path) {
     $link=Get-Link $Path
-    (Path-Equals $link.TargetPath $exePath) -and [string]::IsNullOrWhiteSpace($link.Arguments) -and (Path-Equals $link.WorkingDirectory $AppRoot)
+    (Path-Equals $link.TargetPath $exePath) -and $link.Arguments -eq '--launch' -and (Path-Equals $link.WorkingDirectory $AppRoot)
 }
 function Get-AppID([string]$Path) {
     # UWP links can have an empty WScript TargetPath. Read their shell property instead of trusting their names.
@@ -97,7 +101,7 @@ function Replace-Link([string]$Path,[bool]$Create=$false) {
         # Build a fresh link. Editing an MSIX link in place can retain its AppUserModel activation properties.
         $temp=Join-Path ([IO.Path]::GetDirectoryName($Path)) ('DragonCodexBoot-'+[Guid]::NewGuid().ToString('N')+'.lnk')
         $new=Get-Link $temp
-        $new.TargetPath=$exePath;$new.Arguments='';$new.WorkingDirectory=$AppRoot
+        $new.TargetPath=$exePath;$new.Arguments='--launch';$new.WorkingDirectory=$AppRoot
         $new.Description='Play the startup animation, then open the installed client.'
         $new.IconLocation=if ($old -and ![string]::IsNullOrWhiteSpace($old.IconLocation)) { $old.IconLocation } else { $script:defaultIcon }
         if ($old) { $new.Hotkey=$old.Hotkey;$new.WindowStyle=$old.WindowStyle }
@@ -173,7 +177,7 @@ try {
     $script:officialTargets=New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($path in @($OfficialExecutablePaths)) { if ($path) { $null=$officialTargets.Add([IO.Path]::GetFullPath($path)) } }
     $displayName='Dragon Codex Boot'
-    if (!$SearchRoots) {
+    if (!$SearchRoots -and !$ShortcutPaths) {
         $startApp=Get-StartApps | Where-Object { $_.AppID -ieq $appID } | Select-Object -First 1
         if (!$startApp) { $report.Status='ClientNotInstalled';return }
         $displayName=$startApp.Name
@@ -187,6 +191,18 @@ try {
     }
     $script:defaultIcon=$exePath+',0'
     foreach ($path in $officialTargets) { if (Test-Path -LiteralPath $path) { $script:defaultIcon=$path+',0';break } }
+    if ($ShortcutPaths) {
+        # Explicit installation reuses upstream backup/restore without scanning any directory.
+        $state.AutoAttempted=$true;$state.Restored=$false;Save-State
+        foreach ($path in $ShortcutPaths) {
+            $path=[IO.Path]::GetFullPath($path)
+            if ([IO.Path]::GetExtension($path) -ine '.lnk' -or !(Test-Path -LiteralPath ([IO.Path]::GetDirectoryName($path)) -PathType Container)) { throw 'Each selected shortcut must be a .lnk in an existing directory.' }
+            $report.LinksInspected++
+            Replace-Link $path ([bool]$CreateMissingLinks)
+        }
+        $report.Status=if ($report.Errors.Count) { 'CompletedWithLimits' } else { 'Completed' }
+        return
+    }
     $roots=New-Object 'Collections.Generic.List[string]'
     if ($SearchRoots) {
         foreach ($path in $SearchRoots) { $roots.Add([IO.Path]::GetFullPath($path)) }

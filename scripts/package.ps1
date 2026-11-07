@@ -1,4 +1,4 @@
 [CmdletBinding()]
 param([switch]$WithoutMedia)
-# Compatibility entry point: phase-one packages exclude personal media and integration tools.
+# Packages exclude personal media; shortcut integration is an explicit manual operation.
 & (Join-Path $PSScriptRoot 'package-preview.ps1')
