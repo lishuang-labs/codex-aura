@@ -366,7 +366,7 @@ namespace DragonCodexBoot {
    Text(d,"O R B I T  /  S T U D Y",800,370,10,"#B09BAF",false,true);
    Text(d,"创 作 星 域",800,410,28,"#E7D9D3",true,true);
    Line(d,"#85707F",1,730,461,870,461);Text(d,"C O D E X",800,480,19,"#CEBACB",false,true);
-   Text(d,"纯视觉演绎 · 非系统状态",800,527,11,"#9F8D9F",false,true);d.Pop();
+   Text(d,"灵感跃迁 · 创作无界",800,527,11,"#9F8D9F",false,true);d.Pop();
    Panel(d,87,267,"FORM / 形态",new string[]{"CONCENTRIC   /   同心","RADIAL   /   放射","ORBITAL   /   环绕"});
    Panel(d,1198,267,"PALETTE / 色谱",new string[]{"PLUM GREY   /   紫灰","WARM IVORY   /   暖白","DUSTED ROSE   /   灰粉"});
    for(int i=0;i<92;i++) {
